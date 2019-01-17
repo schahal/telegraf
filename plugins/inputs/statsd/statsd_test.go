@@ -40,6 +40,7 @@ func NewTestStatsd() *Statsd {
 	s.counters = make(map[string]cachedcounter)
 	s.sets = make(map[string]cachedset)
 	s.timings = make(map[string]cachedtimings)
+	s.dsdevents = make(map[string]cacheddsdevent)
 
 	s.MetricSeparator = "_"
 
@@ -918,6 +919,45 @@ func TestParse_DataDogTags(t *testing.T) {
 	}
 }
 
+// Test string looks like a dogstatsd event
+func TestIsDogStatsDEvent(t *testing.T) {
+	s := NewTestStatsd()
+	s.ParseDataDogTags = true
+	s.ParseDataDogEvents = true
+
+	lines := map[string]bool{
+		"_e{21,36}:An exception occurred|Cannot parse CSV file from 10.0.0.17|t:warning|#err_type:bad_file":  true,
+		"_e{4,8}:test|some msg|t:info|#dc:us-west":                                                           true,
+		"_ee{21,36}:An exception occurred|Cannot parse CSV file from 10.0.0.17|t:warning|#err_type:bad_file": false,
+		"_z{4,8}:test|some msg|t:info|#dc:us-west":                                                           false,
+	}
+
+	for line, expected := range lines {
+		if s.isDogStatsDEvent(line) != expected {
+			t.Errorf("Error, this line expected to be a %t dogstatsd event: %s", expected, line)
+		}
+	}
+}
+
+// Test if slice of datadog tags return a map of all tag key-value pairs
+func TestDDTagMap(t *testing.T) {
+	s := NewTestStatsd()
+
+	ddTags := []string{"dc:us-east", "tag2", "state:ny"}
+
+	tags := s.ddTagMap(ddTags)
+
+	expected := map[string]string{
+		"dc":    "us-east",
+		"tag2":  "",
+		"state": "ny",
+	}
+
+	if len(tags) != len(expected) || tags["dc"] != expected["dc"] || tags["tag2"] != expected["tag2"] || tags["state"] != expected["state"] {
+		t.Errorf("Expected: %v, got %v", expected, tags)
+	}
+}
+
 func tagsForItem(m interface{}) map[string]string {
 	switch m.(type) {
 	case map[string]cachedcounter:
@@ -934,6 +974,10 @@ func tagsForItem(m interface{}) map[string]string {
 		}
 	case map[string]cachedtimings:
 		for _, v := range m.(map[string]cachedtimings) {
+			return v.tags
+		}
+	case map[string]cacheddsdevent:
+		for _, v := range m.(map[string]cacheddsdevent) {
 			return v.tags
 		}
 	}
